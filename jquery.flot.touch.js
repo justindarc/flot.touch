@@ -1,16 +1,8 @@
 (function($) {
-	var isReady = false,
-		options = {
-			touch: {
-				pan: 'xy',
-				scale: 'xy',
-				autoWidth: true,
-				autoHeight: true
-			}
-		};
 
 	function init(plot) {
-		var isPanning = false,
+		var isReady = false,
+			isPanning = false,
 			isZooming = false,
 			lastTouchPosition = {
 				x: -1,
@@ -25,51 +17,57 @@
 			scaleOrigin = {
 				x: 50,
 				y: 50
-			};
+			},
+			redrawTimeout,
+			options = plot.getOptions(),
+			placeholder = plot.getPlaceholder();
 
 		function pan(delta) {
-			var placeholder = plot.getPlaceholder(),
-				options = plot.getOptions();
-
 			relativeOffset.x -= delta.x;
 			relativeOffset.y -= delta.y;
+			// console.log('> pan: '+options.touch.pan.toLowerCase()+' '+relativeOffset.x+'/'+relativeOffset.y);
+
+			if (!options.touch.css) {
+				return; // no css updates
+			}
 
 			switch (options.touch.pan.toLowerCase()) {
 				case 'x':
-					placeholder.children('div.flot-touch-container').css('-webkit-transform', 'translateX(' + relativeOffset.x + 'px)');
+					placeholder.children('div.flot-touch-container').css('transform', 'translateX(' + relativeOffset.x + 'px)');
 					break;
 				case 'y':
-					placeholder.children('div.flot-touch-container').css('-webkit-transform', 'translateY(' + relativeOffset.y + 'px)');
+					placeholder.children('div.flot-touch-container').css('transform', 'translateY(' + relativeOffset.y + 'px)');
 					break;
 				default:
-					placeholder.children('div.flot-touch-container').css('-webkit-transform', 'translate(' + relativeOffset.x + 'px,' + relativeOffset.y + 'px)');
+					placeholder.children('div.flot-touch-container').css('transform', 'translate(' + relativeOffset.x + 'px,' + relativeOffset.y + 'px)');
 					break;
 			}
 		}
 
 		function scale(delta) {
-			var placeholder = plot.getPlaceholder(),
-				options = plot.getOptions(),
-				container = placeholder.children('div.flot-touch-container');
+			var container = placeholder.children('div.flot-touch-container');
 
 			relativeScale *= 1 + (delta / 100);
+			// console.log('> scale: '+options.touch.scale.toLowerCase()+' '+relativeScale);
+
+			if (!options.touch.css) {
+				return; // no css updates
+			}
 
 			switch (options.touch.scale.toLowerCase()) {
 				case 'x':
-					container.css('-webkit-transform', 'scaleX(' + relativeScale + ')');
+					container.css('transform', 'scaleX(' + relativeScale + ')');
 					break;
 				case 'y':
-					container.css('-webkit-transform', 'scaleY(' + relativeScale + ')');
+					container.css('transform', 'scaleY(' + relativeScale + ')');
 					break;
 				default:
-					container.css('-webkit-transform', 'scale(' + relativeScale + ')');
+					container.css('transform', 'scale(' + relativeScale + ')');
 					break;
 			}
 		}
 
 		function processOptions(plot, options) {
-			var placeholder = plot.getPlaceholder();
-
 			if (options.touch.autoWidth) {
 				placeholder.css('width', '100%');
 			}
@@ -90,18 +88,94 @@
 			}
 		}
 
+		function updateAxesMinMax() {
+			// console.log('> updateAxesMinMax');
+
+			// apply the pan
+			if (relativeOffset.x !== 0 || relativeOffset.y !== 0) {
+				$.each(plot.getAxes(), function(index, axis) {
+					if (axis.direction === options.touch.pan.toLowerCase() || options.touch.pan.toLowerCase() == 'xy') {
+						var min = axis.c2p(axis.p2c(axis.touch.min) - relativeOffset[axis.direction]),
+							max = axis.c2p(axis.p2c(axis.touch.max) - relativeOffset[axis.direction]);
+
+						axis.options.min = min;
+						axis.options.max = max;
+					}
+				});
+			}
+
+			// apply the scale
+			if (relativeScale !== 1.0) {
+				var width = plot.width(),
+					height = plot.height(),
+					scaleOriginPixel = {
+						x: Math.round((scaleOrigin.x / 100) * width),
+						y: Math.round((scaleOrigin.y / 100) * height)
+					},
+					range = {
+						x: {
+							min: scaleOriginPixel.x - (scaleOrigin.x / 100) * width / relativeScale,
+							max: scaleOriginPixel.x + (1 - (scaleOrigin.x / 100)) * width / relativeScale
+						},
+						y: {
+							min: scaleOriginPixel.y - (scaleOrigin.y / 100) * height / relativeScale,
+							max: scaleOriginPixel.y + (1 - (scaleOrigin.y / 100)) * height / relativeScale
+						}
+					};
+
+				$.each(plot.getAxes(), function(index, axis) {
+					if (axis.direction === options.touch.scale.toLowerCase() || options.touch.scale.toLowerCase() == 'xy') {
+						var min = axis.c2p(range[axis.direction].min);
+						var max = axis.c2p(range[axis.direction].max);
+
+						if (min > max) {
+							var temp = min;
+							min = max;
+							max = temp;
+						}
+
+						axis.options.min = min;
+						axis.options.max = max;
+					}
+				});
+			}
+		}
+
+		function redraw() {
+			updateAxesMinMax();
+
+			if (typeof options.callback == 'function') {
+				options.callback();
+			}
+			else {
+				plot.setupGrid();
+				plot.draw();
+			}
+		}
+
 		function bindEvents(plot, eventHolder) {
-			var placeholder = plot.getPlaceholder(),
-				container = $('<div class="flot-touch-container" style="background:#fff;"/>');
+			// console.log("> bindEvents");
+			var container = $('<div class="flot-touch-container">');
 
 			placeholder.css({
-				'background': '#fff url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAAZQTFRF////mpqaPjL2kgAAABdJREFUeNpiYIQCBhgYIIEBth4mABBgAEUQAIEfdL0YAAAAAElFTkSuQmCC) repeat',
-				'overflow': 'hidden'
+				overflow: 'hidden'
 			}).children('canvas').wrapAll(container);
 
+
 			placeholder.bind('touchstart', function(evt) {
+				// console.log("> touchstart");
 				var touches = evt.originalEvent.touches,
 					container = placeholder.children('div.flot-touch-container');
+
+				// remember initial axis dimensions
+				$.each(plot.getAxes(), function(index, axis) {
+					if (axis.direction === options.touch.scale.toLowerCase() || options.touch.scale.toLowerCase() == 'xy') {
+						axis.touch = {
+							min: axis.min,
+							max: axis.max,
+						}
+					}
+				});
 
 				if (touches.length === 1) {
 					isPanning = true;
@@ -151,13 +225,18 @@
 					y: Math.round((normalizedTouchPosition.y / rect.height) * 100)
 				};
 
-				container.css('-webkit-transform-origin', scaleOrigin.x + '% ' + scaleOrigin.y + '%');
+				container.css('transform-origin', scaleOrigin.x + '% ' + scaleOrigin.y + '%');
 
-				// Return false to prevent touch scrolling.
+				redrawTimeout = window.setInterval(function() {
+					redraw();
+				}, options.touch.interval);
+
+				// return false to prevent touch scrolling.
 				return false;
 			});
 
 			placeholder.bind('touchmove', function(evt) {
+				// console.log("> touchmove");
 				var touches = evt.originalEvent.touches,
 					position, distance, delta;
 
@@ -171,7 +250,7 @@
 						y: lastTouchPosition.y - position.y
 					};
 
-					// Transform via the delta
+					// transform via the delta
 					pan(delta);
 
 					lastTouchPosition = position;
@@ -185,7 +264,7 @@
 					};
 					delta = distance - lastTouchDistance;
 
-					// Scale via the delta
+					// scale via the delta
 					scale(delta);
 
 					lastTouchPosition = position;
@@ -194,64 +273,12 @@
 			});
 
 			placeholder.bind('touchend', function(evt) {
-				var placeholder = plot.getPlaceholder(),
-					options = plot.getOptions(),
-					container = placeholder.children('div.flot-touch-container');
+				var container = placeholder.children('div.flot-touch-container');
 
-				// Apply the pan.
-				if (relativeOffset.x !== 0 || relativeOffset.y !== 0) {
-					$.each(plot.getAxes(), function(index, axis) {
-						if (axis.direction === options.touch.pan.toLowerCase() || options.touch.pan.toLowerCase() == 'xy') {
-							var min = axis.c2p(axis.p2c(axis.min) - relativeOffset[axis.direction]),
-								max = axis.c2p(axis.p2c(axis.max) - relativeOffset[axis.direction]);
+				window.clearInterval(redrawTimeout);
+				redraw();
 
-							axis.options.min = min;
-							axis.options.max = max;
-						}
-					});
-				}
-
-				// Apply the scale.
-				if (relativeScale !== 1.0) {
-					var width = plot.width(),
-						height = plot.height(),
-						scaleOriginPixel = {
-							x: Math.round((scaleOrigin.x / 100) * width),
-							y: Math.round((scaleOrigin.y / 100) * height)
-						},
-						range = {
-							x: {
-								min: scaleOriginPixel.x - (scaleOrigin.x / 100) * width / relativeScale,
-								max: scaleOriginPixel.x + (1 - (scaleOrigin.x / 100)) * width / relativeScale
-							},
-							y: {
-								min: scaleOriginPixel.y - (scaleOrigin.y / 100) * height / relativeScale,
-								max: scaleOriginPixel.y + (1 - (scaleOrigin.y / 100)) * height / relativeScale
-							}
-						};
-
-					$.each(plot.getAxes(), function(index, axis) {
-						if (axis.direction === options.touch.scale.toLowerCase() || options.touch.scale.toLowerCase() == 'xy') {
-							var min = axis.c2p(range[axis.direction].min);
-							var max = axis.c2p(range[axis.direction].max);
-
-							if (min > max) {
-								var temp = min;
-								min = max;
-								max = temp;
-							}
-
-							axis.options.min = min;
-							axis.options.max = max;
-						}
-					});
-				}
-
-				plot.setupGrid();
-				plot.draw();
-
-				isPanning = false;
-				isZooming = false;
+				isPanning = isZooming = false;
 				lastTouchPosition = {
 					x: -1,
 					y: -1
@@ -268,16 +295,14 @@
 				};
 
 				container.css({
-					'-webkit-transform': 'translate(' + relativeOffset.x + 'px,' + relativeOffset.y + 'px) scale(' + relativeScale + ')',
-					'-webkit-transform-origin': scaleOrigin.x + '% ' + scaleOrigin.y + '%'
+					'transform': 'translate(' + relativeOffset.x + 'px,' + relativeOffset.y + 'px) scale(' + relativeScale + ')',
+					'transform-origin': scaleOrigin.x + '% ' + scaleOrigin.y + '%'
 				});
 			});
 		}
 
 		function processDatapoints(plot, series, datapoints) {
 			if (window.devicePixelRatio) {
-				var placeholder = plot.getPlaceholder();
-
 				placeholder.children('canvas').each(function(index, canvas) {
 					var context = canvas.getContext('2d'),
 						width = $(canvas).attr('width'),
@@ -294,8 +319,6 @@
 		}
 
 		function shutdown(plot, eventHolder) {
-			var placeholder = plot.getPlaceholder();
-
 			placeholder.unbind('touchstart').unbind('touchmove').unbind('touchend');
 		}
 
@@ -304,23 +327,35 @@
 		plot.hooks.processDatapoints.push(processDatapoints);
 		plot.hooks.shutdown.push(shutdown);
 
-		if (!isReady) {
-			$(document).bind('ready orientationchange', function(evt) {
-				window.scrollTo(0, 1);
+		// if (!isReady) {
+		// 	$(document).bind('ready orientationchange', function(evt) {
+		// 		window.scrollTo(0, 1);
 
-				setTimeout(function() {
-					$.plot(placeholder, plot.getData(), plot.getOptions());
-				}, 50);
-			});
+		// 		setTimeout(function() {
+		// 			$.plot(placeholder, plot.getData(), plot.getOptions());
+		// 		}, 50);
+		// 	});
 
-			isReady = true;
-		}
+		// 	isReady = true;
+		// }
 	}
+
+ 	var _options = {
+		touch: {
+			pan: 'xy',
+			scale: 'xy',
+			css: false,
+			autoWidth: true,
+			autoHeight: true,
+			interval: 100,
+			callback: null,
+		}
+	};
 
 	$.plot.plugins.push({
 		init: init,
-		options: options,
+		options: _options,
 		name: 'touch',
-		version: '1.0'
+		version: '2.0'
 	});
 })(jQuery);
